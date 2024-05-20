@@ -2,6 +2,7 @@ package ec2instance
 
 import (
 	"context"
+	"github.com/jbrt/ec2cryptomatic/internal/ebsvolume"
 	"log"
 	"strings"
 
@@ -27,13 +28,13 @@ func (e Ec2Instance) GetEBSMappedVolumes() []types.InstanceBlockDeviceMapping {
 }
 
 // GetEBSVolume returns a specific EBS volume with high level methods
-//func (e Ec2Instance) GetEBSVolume(volumeID string) (*ebsvolume.VolumeToEncrypt, error) {
-//	ebsVolume, volumeError := ebsvolume.New(e.cfg, volumeID)
-//	if volumeError != nil {
-//		return nil, volumeError
-//	}
-//	return ebsVolume, nil
-//}
+func (e Ec2Instance) GetEBSVolume(volumeID string) (*ebsvolume.VolumeToEncrypt, error) {
+	ebsVolume, volumeError := ebsvolume.New(e.ec2client, volumeID)
+	if volumeError != nil {
+		return nil, volumeError
+	}
+	return ebsVolume, nil
+}
 
 // IsStopped will check if the ec2instance is correctly stopped
 func (e Ec2Instance) IsStopped() bool {
