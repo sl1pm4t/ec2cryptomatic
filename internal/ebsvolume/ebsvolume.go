@@ -5,6 +5,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -36,36 +37,35 @@ func (v VolumeToEncrypt) getTagSpecifications() []types.TagSpecification {
 }
 
 // takeSnapshot will take a snapshot from the given EBS volume & wait until this snapshot is completed
-func (v VolumeToEncrypt) takeSnapshot() (*types.Snapshot, error) {
+func (v VolumeToEncrypt) takeSnapshot(ctx context.Context) (*types.Snapshot, error) {
 	snapShotInput := &ec2.CreateSnapshotInput{
 		Description: aws.String("EC2Cryptomatic temporary snapshot for " + *v.volumeID),
 		VolumeId:    v.describe.VolumeId,
 	}
 
 	createSnapOut, errSnapshot := v.client.CreateSnapshot(
-		context.TODO(),
+		ctx,
 		snapShotInput,
 	)
 	if errSnapshot != nil {
 		return nil, errSnapshot
 	}
 
-	snapshot, err := v.client.DescribeSnapshots(context.Background(), &ec2.DescribeSnapshotsInput{
+	descrSnapInput := &ec2.DescribeSnapshotsInput{
 		SnapshotIds: []string{*createSnapOut.SnapshotId},
-	})
+	}
+
+	w := ec2.NewSnapshotCompletedWaiter(v.client)
+	err := w.Wait(ctx, descrSnapInput, time.Minute*5)
 	if err != nil {
 		return nil, err
 	}
 
-	//waiterMaxAttempts := request.WithWaiterMaxAttempts(constants.VolumeMaxAttempts)
-	//errWaiter := v.client.WaitUntilSnapshotCompletedWithContext(
-	//	aws.BackgroundContext(),
-	//	&ec2.DescribeSnapshotsInput{SnapshotIds: []*string{snapshot.SnapshotId}},
-	//	waiterMaxAttempts)
-	//
-	//if errWaiter != nil {
-	//	return nil, errWaiter
-	//}
+	snapshot, err := v.client.DescribeSnapshots(ctx, descrSnapInput)
+	if err != nil {
+		return nil, err
+	}
+
 	return &snapshot.Snapshots[0], nil
 }
 
@@ -79,10 +79,10 @@ func (v VolumeToEncrypt) DeleteVolume() error {
 }
 
 // EncryptVolume will produce an encrypted version of the EBS volume
-func (v VolumeToEncrypt) EncryptVolume(kmsKeyID string) (*types.Volume, error) {
+func (v VolumeToEncrypt) EncryptVolume(ctx context.Context, kmsKeyID string) (*types.Volume, error) {
 	log.Println("---> Start encryption process for volume " + *v.volumeID)
 	encrypted := true
-	snapshot, errSnapshot := v.takeSnapshot()
+	snapshot, errSnapshot := v.takeSnapshot(ctx)
 	if errSnapshot != nil {
 		return nil, errSnapshot
 	}
@@ -111,25 +111,23 @@ func (v VolumeToEncrypt) EncryptVolume(kmsKeyID string) (*types.Volume, error) {
 		return nil, errVolume
 	}
 
-	volume, err := v.client.DescribeVolumes(context.Background(), &ec2.DescribeVolumesInput{
+	descrVolInput := &ec2.DescribeVolumesInput{
 		VolumeIds: []string{*createVolOut.VolumeId},
-	})
+	}
+
+	w := ec2.NewVolumeAvailableWaiter(v.client)
+	err := w.Wait(ctx, descrVolInput, time.Minute*5)
 	if err != nil {
 		return nil, err
 	}
-	//
-	//waiterMaxAttempts := request.WithWaiterMaxAttempts(constants.VolumeMaxAttempts)
-	//errWaiter := v.client.WaitUntilVolumeAvailableWithContext(
-	//	aws.BackgroundContext(),
-	//	&ec2.DescribeVolumesInput{VolumeIds: []string{*volume.VolumeId}},
-	//	waiterMaxAttempts)
-	//
-	//if errWaiter != nil {
-	//	return nil, errWaiter
-	//}
+
+	volume, err := v.client.DescribeVolumes(context.Background(), descrVolInput)
+	if err != nil {
+		return nil, err
+	}
 
 	// Before ends, delete the temporary snapshot
-	_, _ = v.client.DeleteSnapshot(context.TODO(), &ec2.DeleteSnapshotInput{SnapshotId: snapshot.SnapshotId})
+	_, _ = v.client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: snapshot.SnapshotId})
 
 	return &volume.Volumes[0], nil
 }
@@ -140,10 +138,10 @@ func (v VolumeToEncrypt) IsEncrypted() bool {
 }
 
 // New returns a well construct EC2Instance object ec2instance
-func New(ec2Client *ec2.Client, volumeID string) (*VolumeToEncrypt, error) {
+func New(ctx context.Context, ec2Client *ec2.Client, volumeID string) (*VolumeToEncrypt, error) {
 	// Trying to describe the given ec2instance as security mechanism (ec2instance is exists ? credentials are ok ?)
 	volumeInput := &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}}
-	describe, errDescribe := ec2Client.DescribeVolumes(context.Background(), volumeInput)
+	describe, errDescribe := ec2Client.DescribeVolumes(ctx, volumeInput)
 	if errDescribe != nil {
 		log.Println("---> Cannot get information from volume " + volumeID)
 		return nil, errDescribe

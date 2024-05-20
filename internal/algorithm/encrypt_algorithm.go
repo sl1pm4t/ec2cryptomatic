@@ -1,16 +1,17 @@
 package algorithm
 
 import (
+	"context"
 	"errors"
 	"log"
 
 	"github.com/jbrt/ec2cryptomatic/internal/ec2instance"
 )
 
-var	nonEligibleForEncryptionError = errors.New("instance must be stopped and compatible with EBS encryption")
+var nonEligibleForEncryptionError = errors.New("instance must be stopped and compatible with EBS encryption")
 
 // EncryptInstance will takes an instanceID and encrypt all the related EBS volumes
-func EncryptInstance(ec2 *ec2instance.Ec2Instance, kmsKeyAlias string, discardSource bool, startInstance bool) error {
+func EncryptInstance(ctx context.Context, ec2 *ec2instance.Ec2Instance, kmsKeyAlias string, discardSource bool, startInstance bool) error {
 
 	if !ec2.IsStopped() || !ec2.IsSupportsEncryptedVolumes() {
 		return nonEligibleForEncryptionError
@@ -20,16 +21,22 @@ func EncryptInstance(ec2 *ec2instance.Ec2Instance, kmsKeyAlias string, discardSo
 	for _, ebsVolume := range ec2.GetEBSMappedVolumes() {
 		log.Println("-- Beginning work on EBS volume " + *ebsVolume.Ebs.VolumeId)
 
-		sourceVolume, volumeError := ec2.GetEBSVolume(*ebsVolume.Ebs.VolumeId); if volumeError != nil {
+		sourceVolume, volumeError := ec2.GetEBSVolume(ctx, *ebsVolume.Ebs.VolumeId)
+		if volumeError != nil {
 			return errors.New("Problem with volume initialization: " + volumeError.Error())
 		}
+		if sourceVolume.IsEncrypted() {
+			log.Println("-- skipping encrypted EBS volume (already encrypted): " + *ebsVolume.Ebs.VolumeId)
+			continue
+		}
 
-		encryptedVolume, encryptedVolumeError := sourceVolume.EncryptVolume(kmsKeyAlias); if encryptedVolumeError != nil {
+		encryptedVolume, encryptedVolumeError := sourceVolume.EncryptVolume(ctx, kmsKeyAlias)
+		if encryptedVolumeError != nil {
 			log.Printf("Problem while encrypting volume: %s (%s)\n", *ebsVolume.Ebs.VolumeId, encryptedVolumeError.Error())
 			continue
 		}
 
-		if swappingError := ec2.SwapBlockDevice(ebsVolume, encryptedVolume); swappingError != nil {
+		if swappingError := ec2.SwapBlockDevice(ctx, ebsVolume, *encryptedVolume); swappingError != nil {
 			log.Println("Problem while trying to swap volumes: " + swappingError.Error())
 			continue
 		}

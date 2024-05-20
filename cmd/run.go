@@ -23,12 +23,13 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/kms"
-	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/jbrt/ec2cryptomatic/internal/algorithm"
 	"log"
 
-	"github.com/jbrt/ec2cryptomatic/internal/algorithm"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+
 	"github.com/jbrt/ec2cryptomatic/internal/ec2instance"
 	"github.com/spf13/cobra"
 )
@@ -48,21 +49,29 @@ var runCmd = &cobra.Command{
 
 		fmt.Print("\t\t-=[ EC2Cryptomatic ]=-\n")
 
-		awsSession, err := session.NewSession(&aws.Config{Region: aws.String(region)});	if err != nil {
-			log.Fatalln("Cannot create an AWS awsSession object: " + err.Error())
+		// Load the Shared AWS Configuration (~/.aws/config)
+		cfg, err := config.LoadDefaultConfig(
+			cmd.Context(),
+			config.WithRegion(region),
+		)
+		if err != nil {
+			log.Fatalln("Could not create AWS config: " + err.Error())
 		}
 
-		kmsService := kms.New(awsSession)
+		kmsService := kms.NewFromConfig(cfg)
 		kmsInput := &kms.DescribeKeyInput{KeyId: aws.String(kmsAlias)}
-		if _, errorKmsKey := kmsService.DescribeKey(kmsInput); errorKmsKey != nil {
+
+		if _, errorKmsKey := kmsService.DescribeKey(cmd.Context(), kmsInput); errorKmsKey != nil {
 			log.Fatalln("Error with this key: " + errorKmsKey.Error())
 		}
 
-		ec2Instance, instanceError := ec2instance.New(awsSession, instanceID); if instanceError != nil {
+		ec2Instance, instanceError := ec2instance.New(cfg, instanceID)
+		if instanceError != nil {
 			log.Fatalln(instanceError)
 		}
+		//log.Println(pretty.Sprint(ec2Instance))
 
-		if errorAlgorithm := algorithm.EncryptInstance(ec2Instance, kmsAlias, discard, startInstance); errorAlgorithm != nil {
+		if errorAlgorithm := algorithm.EncryptInstance(cmd.Context(), ec2Instance, kmsAlias, discard, startInstance); errorAlgorithm != nil {
 			log.Fatalln("/!\\ " + errorAlgorithm.Error())
 		}
 	},

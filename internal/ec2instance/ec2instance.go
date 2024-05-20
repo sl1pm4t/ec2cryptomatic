@@ -5,6 +5,7 @@ import (
 	"github.com/jbrt/ec2cryptomatic/internal/ebsvolume"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -28,8 +29,8 @@ func (e Ec2Instance) GetEBSMappedVolumes() []types.InstanceBlockDeviceMapping {
 }
 
 // GetEBSVolume returns a specific EBS volume with high level methods
-func (e Ec2Instance) GetEBSVolume(volumeID string) (*ebsvolume.VolumeToEncrypt, error) {
-	ebsVolume, volumeError := ebsvolume.New(e.ec2client, volumeID)
+func (e Ec2Instance) GetEBSVolume(ctx context.Context, volumeID string) (*ebsvolume.VolumeToEncrypt, error) {
+	ebsVolume, volumeError := ebsvolume.New(ctx, e.ec2client, volumeID)
 	if volumeError != nil {
 		return nil, volumeError
 	}
@@ -65,33 +66,31 @@ func (e Ec2Instance) StartInstance() error {
 }
 
 // SwapBlockDevice will swap two EBS volumes from an EC2 ec2instance
-func (e Ec2Instance) SwapBlockDevice(source types.InstanceBlockDeviceMapping, target types.Volume) error {
+func (e Ec2Instance) SwapBlockDevice(ctx context.Context, source types.InstanceBlockDeviceMapping, target types.Volume) error {
 	detach := &ec2.DetachVolumeInput{VolumeId: aws.String(*source.Ebs.VolumeId)}
-	if _, errDetach := e.ec2client.DetachVolume(context.TODO(), detach); errDetach != nil {
+	if _, errDetach := e.ec2client.DetachVolume(ctx, detach); errDetach != nil {
 		return errDetach
 	}
-	// ec2c := e.ec2client
 
-	// waiterMaxAttempts := request.WithWaiterMaxAttempts(constants.InstanceMaxAttempts)
-	// errWaiter := e.ec2client.WaitUntilVolumeAvailableWithContext(
-	// 	aws.BackgroundContext(),
-	// 	&ec2.DescribeVolumesInput{VolumeIds: []*string{source.Ebs.VolumeId}},
-	// 	waiterMaxAttempts)
+	w := ec2.NewVolumeAvailableWaiter(e.ec2client)
+	err := w.Wait(ctx,
+		&ec2.DescribeVolumesInput{VolumeIds: []string{*source.Ebs.VolumeId}},
+		time.Minute*5,
+	)
+	if err != nil {
+		return err
+	}
 
-	// if errWaiter != nil {
-	// 	return errWaiter
-	// }
+	attach := &ec2.AttachVolumeInput{
+		Device:     aws.String(*source.DeviceName),
+		InstanceId: aws.String(*e.InstanceID),
+		VolumeId:   aws.String(*target.VolumeId),
+	}
 
-	//attach := &ec2.AttachVolumeInput{
-	//	Device:     aws.String(*source.DeviceName),
-	//	InstanceId: aws.String(*e.InstanceID),
-	//	VolumeId:   aws.String(*target.VolumeId),
-	//}
-	//
-	//if _, errAttach := e.ec2client.AttachVolume(context.TODO(), attach); errAttach != nil {
-	//	return errAttach
-	//}
-	//
+	if _, errAttach := e.ec2client.AttachVolume(ctx, attach); errAttach != nil {
+		return errAttach
+	}
+
 	//if *source.Ebs.DeleteOnTermination {
 	//
 	//	mappingSpecification := ec2.InstanceBlockDeviceMappingSpecification{
@@ -107,7 +106,7 @@ func (e Ec2Instance) SwapBlockDevice(source types.InstanceBlockDeviceMapping, ta
 	//		InstanceId:          e.InstanceID,
 	//	}
 	//
-	//	requestModify, _ := e.ec2client.ModifyInstanceAttributeRequest(context.TODO(), &attributeInput)
+	//	requestModify, _ := e.ec2client.ModifyInstanceAttributeRequest(ctx, &attributeInput)
 	//
 	//	if errorRequest := requestModify.Send(); errorRequest != nil {
 	//		return errorRequest
