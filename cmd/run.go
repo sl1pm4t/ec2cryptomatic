@@ -43,6 +43,7 @@ var runCmd = &cobra.Command{
 
 		instanceID, _ := cmd.Flags().GetString("instance")
 		kmsAlias, _ := cmd.Flags().GetString("kmsKeyAlias")
+		kmsID, _ := cmd.Flags().GetString("kmsKeyID")
 		region, _ := cmd.Flags().GetString("region")
 		discard, _ := cmd.Flags().GetBool("discard")
 		startInstance, _ := cmd.Flags().GetBool("start")
@@ -58,8 +59,12 @@ var runCmd = &cobra.Command{
 			log.Fatalln("Could not create AWS config: " + err.Error())
 		}
 
+		keyID := kmsID
+		if keyID == "" {
+			keyID = kmsAlias
+		}
 		kmsService := kms.NewFromConfig(cfg)
-		kmsInput := &kms.DescribeKeyInput{KeyId: aws.String(kmsAlias)}
+		kmsInput := &kms.DescribeKeyInput{KeyId: aws.String(keyID)}
 
 		if _, errorKmsKey := kmsService.DescribeKey(cmd.Context(), kmsInput); errorKmsKey != nil {
 			log.Fatalln("Error with this key: " + errorKmsKey.Error())
@@ -69,7 +74,6 @@ var runCmd = &cobra.Command{
 		if instanceError != nil {
 			log.Fatalln(instanceError)
 		}
-		//log.Println(pretty.Sprint(ec2Instance))
 
 		if errorAlgorithm := algorithm.EncryptInstance(cmd.Context(), ec2Instance, kmsAlias, discard, startInstance); errorAlgorithm != nil {
 			log.Fatalln("/!\\ " + errorAlgorithm.Error())
@@ -78,12 +82,13 @@ var runCmd = &cobra.Command{
 }
 
 func init() {
-	var awsRegion, instanceID, kmsKeyAlias string
+	var awsRegion, instanceID, kmsKeyAlias, kmsID string
 
 	rootCmd.AddCommand(runCmd)
 
 	runCmd.Flags().StringVarP(&instanceID, "instance", "i", "", "Instance ID of instance of encrypt (required)")
 	runCmd.Flags().StringVarP(&kmsKeyAlias, "kmsKeyAlias", "k", "alias/aws/ebs", "KMS key alias name with format alias/NAME")
+	runCmd.Flags().StringVarP(&kmsID, "kmsKeyID", "K", "", "KMS key ID")
 	runCmd.Flags().StringVarP(&awsRegion, "region", "r", "", "AWS region (required)")
 	runCmd.Flags().BoolP("discard", "d", false, "Discard source volumes after encryption process (default: false)")
 	runCmd.Flags().BoolP("start", "s", false, "Start instance after volume encryption (default: false)")
